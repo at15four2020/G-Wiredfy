@@ -240,14 +240,10 @@ function Wiredfy(ext) {
 	
 					watchingObjects[objectUid].push(handler)
 				}
-				return {
-					watcher: watcher,
-				}
+				return { watcher }
 			}
 
-			return {
-				changeState: changeState,
-			}
+			return { changeState }
 		},
 	}
 
