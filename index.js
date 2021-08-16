@@ -1,7 +1,7 @@
-const { HDirection } = require('gnode-api');
+const { HPacket, HDirection } = require('gnode-api');
 
 function Wiredfy(ext) {
-	let HPacket
+	let myId, waitingForMyBadges, resolveInit
 	if (typeof parse_in_Users == 'undefined') {
 		parse_in_Users = require('./parsers/in_Users')
 	}
@@ -28,6 +28,7 @@ function Wiredfy(ext) {
 		const objectUid = packet.readString()
 		if (watchingObjects[objectUid]) {
 			const handlers = watchingObjects[objectUid]
+
 			for (let i = 0; i < handlers.length; i++) {
 				if (typeof handlers[i] == 'function')
 					handlers[i]()
@@ -39,7 +40,7 @@ function Wiredfy(ext) {
 
 	function handleUserUpdate(message) {
 		const packet = message.getPacket()
-		
+
 		const users = parse_in_UserUpdate(packet).users
 
 		for (let i = 0; i < users.length; i++) {
@@ -55,29 +56,37 @@ function Wiredfy(ext) {
 		}
 	}
 
+	function handleHabboUserBadges(message) {
+		if (waitingForMyBadges) {
+			waitingForMyBadges = false
+			const packet = message.getPacket()
+			myId = packet.readInteger()
+			resolveInit()
+		}
+	}
+
 	function initIntercepting() {
 		ext.interceptByNameOrHash(HDirection.TOCLIENT, 'Users', handleUsers)
 		ext.interceptByNameOrHash(HDirection.TOCLIENT, 'ObjectDataUpdate', handleObjectUpdate)
 		ext.interceptByNameOrHash(HDirection.TOCLIENT, 'UserUpdate', handleUserUpdate)
+		ext.interceptByNameOrHash(HDirection.TOCLIENT, 'HabboUserBadges', handleHabboUserBadges)
 	}
 
 	function init(hostHPacket) {
-		HPacket = hostHPacket
-		
-		const p1 = new HPacket(`{in:Chat}{i:0}{s:"asd"}{i:0}{i:0}{i:0}{i:0}`)
-		console.log(p1.isCorrupted())
+		// HPacket = hostHPacket
 
-		const p2 = new HPacket(`{out:MoveAvatar}{i:7}{i:4}`)
-		console.log(p2.isCorrupted())
-
-		console.log(ext.sendToClient(p1))
-		console.log(ext.sendToServer(p2))
+		waitingForMyBadges = true
+		ext.sendToServer(new HPacket("{out:GetBadges}"))
 		initIntercepting()
+
+		return new Promise(res => {
+			resolveInit = res
+		})
 	}
 
 	function exit() {
-		watchingUsers = {}
-		watchingObjects = {}
+		for (const prop in watchingUsers) delete watchingUsers[prop]
+		for (const prop in watchingObjects) delete watchingObjects[prop]
 	}
 
 	function when(watchable) {
@@ -96,27 +105,38 @@ function Wiredfy(ext) {
 
 		function buildDoFunction(obj) {
 			return function doFunction(action) {
-				obj.action = action
-				toDos.push(obj)
+				if (obj) {
+					const newObj = Object.assign({}, obj)
+					newObj.action = action
+					toDos.push(newObj)
+				} else {
+					toDos.push({ action })
+				}
 			}
 		}
 
 		function buildIfFunction(obj) {
 			return function ifFunction(gettable) {
-				if (!obj.conditions) obj.conditions = []
-
-				obj.conditions.push(gettable.getter)
+				let nextObj
+				if (obj) {
+					const newObj = Object.assign({}, obj)
+					if (!newObj.conditions) newObj.conditions = []
+					newObj.conditions.push(gettable.getter)
+					nextObj = newObj
+				} else {
+					nextObj = { conditions: [gettable.getter] }
+				}
 
 				return {
-					if: buildIfFunction(obj),
-					do: buildDoFunction(obj),
+					if: buildIfFunction(nextObj),
+					do: buildDoFunction(nextObj),
 				}
 			}
 		}
 
 		return {
-			if: buildIfFunction({}),
-			do: buildDoFunction({}),
+			if: buildIfFunction(),
+			do: buildDoFunction(),
 		}
 	}
 
@@ -127,21 +147,47 @@ function Wiredfy(ext) {
 			}
 		},
 
-		say: function(message) {
+		say: function(message, style = 7) {
 			return function() {
-				ext.sendToServer(new HPacket(`{out:Chat}{s:${message}}`))
+				ext.sendToServer(new HPacket(`{out:Chat}{s:"${message}"}{i:${style}}{i:0}`))
 			}
 		},
 
-		shout: function(message) {
+		shout: function(message, style = 7) {
+			return function() {
+				ext.sendToServer(new HPacket(`{out:Shout}{s:"${message}"}{i:${style}}`))
+			}
+		},
 
+		dance: function (style = 1) {
+			return function () {
+				ext.sendToServer(new HPacket(`{out:Dance}{i:${style}}`))
+			}
+		},
+
+		sit: function () {
+			return function () {
+				ext.sendToServer(new HPacket("{out:ChangePosture}{i:1}"))
+			}
+		},
+
+		stand: function () {
+			return function () {
+				ext.sendToServer(new HPacket("{out:ChangePosture}{i:0}"))
+			}
+		},
+
+		wave: function () {
+			return function () {
+				ext.sendToServer(new HPacket("{out:AvatarExpression}{i:1}"))
+			}
 		},
 	}
 
 	const props = {
-		avatar: function(userId) {
-			function inPlace(expectedX, expectedY) {
-				let state = false 
+		avatar: function (userId) {
+			function inPlace(expectedX, expectedY) { // TODO: fix when leaving the place
+				let state = false
 				if (!watchingUsers[userId]) watchingUsers[userId] = []
 
 				const watchers = []
@@ -149,7 +195,7 @@ function Wiredfy(ext) {
 				function handler(realX, realY) {
 					if (expectedX == realX && expectedY == realY) {
 						state = true
-						for (let  i = 0; i < watchers.length; i++) {
+						for (let i = 0; i < watchers.length; i++) {
 							watchers[i]()
 						}
 					} else {
@@ -177,11 +223,13 @@ function Wiredfy(ext) {
 			}
 		},
 
-		me: function() {
-			return avatar(myId)
+		me: function () {
+			if (!myId) throw new Error("My id not found!")
+
+			return props.avatar(myId)
 		},
 
-		object: function(objectUid) {
+		object: function (objectUid) {
 			function changeState() {
 				function watcher(callback) {
 					if (!watchingObjects[objectUid]) watchingObjects[objectUid] = []
@@ -201,17 +249,55 @@ function Wiredfy(ext) {
 				changeState: changeState,
 			}
 		},
+	}
+
+	const utils = {
+		all: function (callbacks) {
+			return function () {
+				for (const callback of callbacks) {
+					callback()
+				}
+			}
+		},
+
+		wait: function (delay) {
+			return {
+				then: function (callback) {
+					return function () {
+						setTimeout(callback, delay)
+					}
+				}
+			}
+		},
+
+		every: function (timeout) {
+			const watchers = []
+
+			function handler() {
+				for (const watcher of watchers) {
+					watcher()
+				}
+			}
+
+			let interval = setInterval(handler, timeout)
+
+			function watcher(callback) {
+				watchers.push(callback)
+			}
+
+			function stop() {
+				clearInterval(interval)
+			}
+
+			return { watcher, stop }
+		},
 
 		clock: function() {
 
 		},
-
-		every: function() {
-
-		},
 	}
 
-	return { init, exit, when, actions, props }
+	return { init, exit, when, actions, props, utils }
 }
 
 module.exports = Wiredfy
