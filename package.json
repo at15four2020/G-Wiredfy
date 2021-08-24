@@ -3,10 +3,8 @@
   "version": "0.0.1",
   "description": "Node.js G-Earth library to do any client side task with a Wired-like language",
   "main": "index.js",
-  "dependencies": {},
-  "devDependencies": {},
   "peerDependencies": {
-    "gnode-api": "0.0.1-beta.6"
+    "gnode-api": "github:at15four2020/G-Node"
   },
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
