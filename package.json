@@ -4,7 +4,7 @@
   "description": "Node.js G-Earth library to do any client side task with a Wired-like language",
   "main": "index.js",
   "peerDependencies": {
-    "gnode-api": "github:at15four2020/G-Node"
+    "gnode-api": "*"
   },
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
